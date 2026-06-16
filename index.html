@@ -1078,18 +1078,15 @@ function renderHome(){
     <div class="sc green clickable" onclick="goToListWithFilter('ok')" title="クリックして一覧へ">
       <div class="sn">${ok.length}</div><div class="sl">✓ 充足</div>
     </div>`;
-  const alerts=[...need,...ord].slice(0,8);
+  // 要対応アイテム：要発注（在庫不足・未手配）のみを全件表示。手配中は手配中一覧へ移動済みのため除外。
+  const alerts=need;
   document.getElementById('home-alerts').innerHTML=alerts.length
     ?alerts.map(it=>{
-      const s=getStatus(it);const cls=s==='need'?'danger':'purp';
-      const btns=s==='need'
-        ?`<div class="alert-actions"><button class="act-btn order" onclick="setOrdered('${it.id}',true)">📋手配中</button><button class="act-btn edit" onclick="openEditModal('${it.id}')">✏️</button></div>`
-        :`<div class="alert-actions"><button class="act-btn green-act" onclick="quickIn('${it.id}')">↓入庫</button><button class="act-btn unorder" onclick="setOrdered('${it.id}',false)">✕解除</button></div>`;
       const locHtml=parseLocs(it.loc).map(l=>`<span class="loc-badge" onclick="showLocView('${l.zone}')">📍${l.zone}</span>`).join(' ');
-      return`<div class="alert-row ${cls}"><div style="flex:1;min-width:0">
-        <div class="aname ${cls}">${it.code} ${it.name||it.supply_name} ${it.size||''} ${getDeptLabel(it.code)}</div>
+      return`<div class="alert-row danger"><div style="flex:1;min-width:0">
+        <div class="aname danger">${it.code} ${it.name||it.supply_name} ${it.size||''} ${getDeptLabel(it.code)}</div>
         <div class="ainfo">在庫 ${it.stock}${getUnit(it)} / 適正 ${it.min_stock}${getUnit(it)} ${locHtml}</div>
-      </div>${btns}</div>`;
+      </div><div class="alert-actions"><button class="act-btn order" onclick="setOrdered('${it.id}',true)">📋 手配する</button><button class="act-btn edit" onclick="openEditModal('${it.id}')">✏️</button></div></div>`;
     }).join('')
     :'<div style="font-size:12px;color:var(--text-2);padding:8px 0">✓ 要対応アイテムはありません</div>';
 }
