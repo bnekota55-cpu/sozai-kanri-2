@@ -521,6 +521,16 @@ header h1{font-size:15px;font-weight:700;flex:1}
         <span style="color:var(--text-2)">合計入庫数</span>
         <span id="ei-loc-total" style="font-weight:700;color:var(--text)">0</span>
       </div>
+      <div style="margin-bottom:10px">
+        <div class="hint" style="margin-bottom:5px">＋ 新しい保管場所を追加して入庫する場合</div>
+        <div class="loc-add-row">
+          <input type="text" id="ei-newloc-input" placeholder="④-7" style="flex:1;min-width:80px;padding:6px 8px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);font-size:12px;font-family:inherit" readonly>
+          <input type="number" id="ei-newloc-qty" placeholder="数量" style="width:65px;padding:6px 8px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);font-size:12px;font-family:inherit" min="0">
+          <button class="secondary" style="padding:5px 9px;font-size:11px;white-space:nowrap" onclick="openLocPicker('eiNew')">🗺</button>
+          <button class="secondary" style="padding:5px 9px;font-size:11px;white-space:nowrap" onclick="addEiNewLoc()">＋ 追加</button>
+        </div>
+        <div class="loc-list" id="ei-newloc-list" style="margin-top:6px"></div>
+      </div>
     </div>
 
     <!-- 保管場所なし・通常入庫 -->
@@ -668,7 +678,7 @@ const GAS_URL='https://script.google.com/macros/s/AKfycbzqVdQBYhXHk0baTnS3vfKpW2
 let items=[],selEI=null,selSR=null,selOut=null,listFilter='all';
 let listPage=0; const PAGE_SIZE=20;
 let locPickerTarget=null,locPickerSelected=null,currentFactory='4';
-let newLocEntries=[],editLocEntries=[],supplyLocEntries=[];
+let newLocEntries=[],editLocEntries=[],supplyLocEntries=[],eiNewLocEntries=[];
 let currentItemType='sheet';
 
 /* ====== 部署・コード定義 ====== */
@@ -914,7 +924,7 @@ function pickZone(id){
 }
 function confirmLocPicker(){
   if(!locPickerSelected)return;
-  const inputMap={new:'n-loc-input',edit:'edit-loc-input',supply:'s-loc-input'};
+  const inputMap={new:'n-loc-input',edit:'edit-loc-input',supply:'s-loc-input',eiNew:'ei-newloc-input'};
   const el=document.getElementById(inputMap[locPickerTarget]);
   if(el) el.value=locPickerSelected;
   closeModal('loc-picker-modal');
@@ -1440,6 +1450,8 @@ function buildInLocSection(it){
   const locs=parseLocs(it.loc||'');
   const locSec=document.getElementById('ei-loc-section');
   const qtySec=document.getElementById('ei-qty-section');
+  eiNewLocEntries=[];
+  renderEiNewLocList();
   if(locs.length>0){
     locSec.style.display='';
     qtySec.style.display='none';
@@ -1462,6 +1474,37 @@ function buildInLocSection(it){
     document.getElementById('ei-qty').value=1;
   }
 }
+/* 新しい保管場所の追加（既存品番入庫時） */
+function addEiNewLoc(){
+  const zone=document.getElementById('ei-newloc-input').value.trim();
+  if(!zone){alert('地図から場所を選択してください');return;}
+  const qty=parseInt(document.getElementById('ei-newloc-qty').value)||0;
+  if(qty<1){alert('数量を1以上入力してください');return;}
+  const it=items.find(x=>String(x.id)===String(selEI));
+  const existingLocs=parseLocs(it?it.loc||'':'');
+  if(existingLocs.find(e=>e.zone===zone)||eiNewLocEntries.find(e=>e.zone===zone)){
+    alert('その場所はすでに登録済みです。上のリストから入庫数を入力してください。');return;
+  }
+  eiNewLocEntries.push({zone,qty});
+  document.getElementById('ei-newloc-input').value='';
+  document.getElementById('ei-newloc-qty').value='';
+  renderEiNewLocList();
+  calcLocInTotal();
+}
+function removeEiNewLoc(idx){
+  eiNewLocEntries.splice(idx,1);
+  renderEiNewLocList();
+  calcLocInTotal();
+}
+function renderEiNewLocList(){
+  const it=items.find(x=>String(x.id)===String(selEI));
+  document.getElementById('ei-newloc-list').innerHTML=eiNewLocEntries.map((e,i)=>`
+    <div class="loc-entry">
+      <span class="loc-name" onclick="showLocView('${e.zone}')">📍${e.zone}</span>
+      <span class="loc-qty">(+${e.qty}${it?getUnit(it):''})</span>
+      <button class="loc-del" onclick="removeEiNewLoc(${i})">×</button>
+    </div>`).join('');
+}
 function adjLocIn(idx,d){
   const el=document.getElementById('ei-loc-qty-'+idx);
   el.value=Math.max(0,parseInt(el.value||0)+d);
@@ -1475,6 +1518,7 @@ function calcLocInTotal(){
     const el=document.getElementById('ei-loc-qty-'+i);
     if(el) total+=parseInt(el.value)||0;
   });
+  eiNewLocEntries.forEach(e=>{total+=e.qty||0;});
   document.getElementById('ei-loc-total').textContent=total+(it?getUnit(it):'');
 }
 
@@ -1557,10 +1601,13 @@ async function submitInExist(){
   if(useLocMode){
     const locs=parseLocs(it.loc||'');
     const inQtys=locs.map((_,i)=>parseInt(document.getElementById('ei-loc-qty-'+i).value)||0);
-    qty=inQtys.reduce((a,b)=>a+b,0);
+    const existingTotal=inQtys.reduce((a,b)=>a+b,0);
+    const newLocTotal=eiNewLocEntries.reduce((a,e)=>a+(e.qty||0),0);
+    qty=existingTotal+newLocTotal;
     if(qty<1){errEl.textContent='1以上入力してください';errEl.style.display='';return;}
-    // 保管場所の数量を加算
+    // 既存保管場所の数量を加算 ＋ 新規保管場所を追加
     const updated=locs.map((l,i)=>({...l,qty:(l.qty!=null?l.qty:0)+inQtys[i]}));
+    eiNewLocEntries.forEach(e=>updated.push({zone:e.zone,qty:e.qty,unit:''}));
     newLocStr=locsToString(updated);
   } else {
     qty=parseInt(document.getElementById('ei-qty').value)||0;
