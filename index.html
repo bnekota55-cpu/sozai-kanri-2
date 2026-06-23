@@ -935,8 +935,15 @@ function pickZone(id){
 function confirmLocPicker(){
   if(!locPickerSelected)return;
   const inputMap={new:'n-loc-input',edit:'edit-loc-input',supply:'s-loc-input',eiNew:'ei-newloc-input',eiNoLoc:'ei-noloc-input'};
-  const el=document.getElementById(inputMap[locPickerTarget]);
-  if(el) el.value=locPickerSelected;
+  // 発注一覧の新規場所追加は 'oiNew_<id>' 形式
+  if(locPickerTarget&&locPickerTarget.startsWith('oiNew_')){
+    const id=locPickerTarget.replace('oiNew_','');
+    const el=document.getElementById('oi-newloc-input-'+id);
+    if(el) el.value=locPickerSelected;
+  } else {
+    const el=document.getElementById(inputMap[locPickerTarget]);
+    if(el) el.value=locPickerSelected;
+  }
   closeModal('loc-picker-modal');
 }
 function showLocView(locId){
@@ -1123,6 +1130,9 @@ function showOrderList(){
   showScreen('sc-orders');
   renderOrderList();
 }
+// 発注一覧：品番ごとの新規保管場所追加リスト
+const orderNewLocMap={};
+
 function renderOrderList(){
   const ordering=items.filter(x=>getStatus(x)==='ordering');
   const el=document.getElementById('order-list-body');
@@ -1130,12 +1140,15 @@ function renderOrderList(){
     el.innerHTML='<div style="font-size:12px;color:var(--text-2);padding:16px;text-align:center">手配中のアイテムはありません</div>';
     return;
   }
+  // 新規保管場所リストを初期化
+  ordering.forEach(it=>{ if(!orderNewLocMap[it.id]) orderNewLocMap[it.id]=[]; });
   el.innerHTML=ordering.map(it=>{
     let orderInfo={};
     try{orderInfo=it.order_info?JSON.parse(it.order_info):{};}catch(e){}
     const unit=getUnit(it);
     const nameDisp=it.item_type==='supply'?(it.supply_name||it.name):it.name;
     const locs=parseLocs(it.loc||'');
+    // 既存保管場所の入庫数入力欄
     const locInputs=locs.length>0
       ?locs.map((l,i)=>`
         <div class="loc-out-item" style="margin-bottom:4px">
@@ -1149,12 +1162,12 @@ function renderOrderList(){
             <button class="qb" style="width:26px;height:26px;font-size:14px" onclick="adjOrderIn('${it.id}',${i},1)">＋</button>
           </div>
         </div>`).join('')
-      :`<div class="fg" style="margin-bottom:6px"><div class="qty-row">
+      :`<div class="qty-row" style="margin-bottom:8px">
           <button class="qb" onclick="adjOrderInSimple('${it.id}',-1)">−</button>
           <input class="qv" type="number" id="oi-simple-${it.id}" value="1" min="1" style="width:60px">
           <button class="qb" onclick="adjOrderInSimple('${it.id}',1)">＋</button>
           <span style="font-size:12px;color:var(--text-2)">${unit}</span>
-        </div></div>`;
+        </div>`;
     return`<div class="order-card" id="oc-${it.id}">
       <div class="oc-head">
         <span class="oc-code">${it.code} ${typeBadge(it)}</span>
@@ -1171,18 +1184,29 @@ function renderOrderList(){
       <div style="background:var(--green-bg);border:1px solid var(--green-border);border-radius:var(--radius-sm);padding:10px 12px;margin-top:4px">
         <div style="font-size:11px;font-weight:700;color:var(--green);margin-bottom:6px">📦 入庫数を入力</div>
         ${locInputs}
-        ${locs.length>0?`<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;margin-bottom:6px">
+        ${locs.length>0?`<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;margin-bottom:8px">
           <span style="color:var(--text-2)">合計入庫数</span>
           <span id="oi-total-${it.id}" style="font-weight:700;color:var(--text)">0${unit}</span>
         </div>`:''}
+        <!-- 新しい保管場所を追加 -->
+        <div style="margin-bottom:8px">
+          <div class="hint" style="margin-bottom:5px">＋ 新しい保管場所に入庫する場合</div>
+          <div class="loc-add-row">
+            <input type="text" id="oi-newloc-input-${it.id}" placeholder="④-7" style="flex:1;min-width:80px;padding:6px 8px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);font-size:12px;font-family:inherit" readonly>
+            <input type="number" id="oi-newloc-qty-${it.id}" placeholder="数量" style="width:65px;padding:6px 8px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);font-size:12px;font-family:inherit" min="1">
+            <button class="secondary" style="padding:5px 9px;font-size:11px;white-space:nowrap" onclick="openLocPicker('oiNew_${it.id}')">🗺</button>
+            <button class="secondary" style="padding:5px 9px;font-size:11px;white-space:nowrap" onclick="addOrderNewLoc('${it.id}')">＋</button>
+          </div>
+          <div class="loc-list" id="oi-newloc-list-${it.id}" style="margin-top:5px"></div>
+        </div>
         <div class="fg" style="margin-bottom:8px"><label style="font-size:11px">備考</label>
           <input type="text" id="oi-note-${it.id}" placeholder="納品書番号など" style="width:100%;padding:6px 8px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);font-size:12px;font-family:inherit">
         </div>
-        <div style="display:flex;gap:6px">
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:10px">
           <label class="tswitch" style="flex-shrink:0"><input type="checkbox" id="oi-clear-${it.id}" checked><span class="tslider"></span></label>
           <span style="font-size:11px;color:var(--text-2)">入荷済みにする（手配中フラグを解除）</span>
         </div>
-        <button class="primary green-btn" style="width:100%;margin-top:10px;font-size:13px" onclick="submitOrderIn('${it.id}')">✓ 入庫する</button>
+        <button class="primary green-btn" style="width:100%;font-size:13px" onclick="submitOrderIn('${it.id}')">✓ 入庫する</button>
       </div>
     </div>`;
   }).join('');
@@ -1200,33 +1224,77 @@ function calcOrderInTotal(id){
   const locs=parseLocs(it.loc||'');
   let total=0;
   locs.forEach((_,i)=>{const el=document.getElementById('oi-qty-'+id+'-'+i);if(el)total+=parseInt(el.value)||0;});
+  (orderNewLocMap[id]||[]).forEach(e=>{total+=e.qty||0;});
   const el=document.getElementById('oi-total-'+id);
   if(el) el.textContent=total+getUnit(it);
+}
+function addOrderNewLoc(id){
+  const zone=document.getElementById('oi-newloc-input-'+id).value.trim();
+  if(!zone){alert('地図から場所を選択してください');return;}
+  const qty=parseInt(document.getElementById('oi-newloc-qty-'+id).value)||0;
+  if(qty<1){alert('数量を1以上入力してください');return;}
+  const it=items.find(x=>String(x.id)===String(id));
+  const existingLocs=parseLocs(it?it.loc||'':'');
+  if(!orderNewLocMap[id]) orderNewLocMap[id]=[];
+  if(existingLocs.find(e=>e.zone===zone)||orderNewLocMap[id].find(e=>e.zone===zone)){
+    alert('その場所はすでに登録済みです');return;
+  }
+  orderNewLocMap[id].push({zone,qty});
+  document.getElementById('oi-newloc-input-'+id).value='';
+  document.getElementById('oi-newloc-qty-'+id).value='';
+  renderOrderNewLocList(id);
+  calcOrderInTotal(id);
+}
+function removeOrderNewLoc(id,idx){
+  if(orderNewLocMap[id]) orderNewLocMap[id].splice(idx,1);
+  renderOrderNewLocList(id);
+  calcOrderInTotal(id);
+}
+function renderOrderNewLocList(id){
+  const it=items.find(x=>String(x.id)===String(id));
+  const el=document.getElementById('oi-newloc-list-'+id);
+  if(!el)return;
+  el.innerHTML=(orderNewLocMap[id]||[]).map((e,i)=>`
+    <div class="loc-entry">
+      <span class="loc-name" onclick="showLocView('${e.zone}')">📍${e.zone}</span>
+      <span class="loc-qty">(+${e.qty}${it?getUnit(it):''})</span>
+      <button class="loc-del" onclick="removeOrderNewLoc('${id}',${i})">×</button>
+    </div>`).join('');
 }
 async function submitOrderIn(id){
   const it=items.find(x=>String(x.id)===String(id));if(!it)return;
   const unit=getUnit(it);
   const locs=parseLocs(it.loc||'');
   let qty=0;
-  let newLoc=null;
+  let newLocStr=null;
+  const newLocs=orderNewLocMap[id]||[];
   if(locs.length>0){
     const inQtys=locs.map((_,i)=>parseInt(document.getElementById('oi-qty-'+id+'-'+i).value)||0);
-    qty=inQtys.reduce((a,b)=>a+b,0);
+    const existTotal=inQtys.reduce((a,b)=>a+b,0);
+    const newTotal=newLocs.reduce((a,e)=>a+(e.qty||0),0);
+    qty=existTotal+newTotal;
     if(qty<1){alert('1以上入力してください');return;}
     const updated=locs.map((l,i)=>({...l,qty:(l.qty!=null?l.qty:0)+inQtys[i]}));
-    newLoc=locsToString(updated);
+    newLocs.forEach(e=>updated.push({zone:e.zone,qty:e.qty,unit:''}));
+    newLocStr=locsToString(updated);
   } else {
     qty=parseInt(document.getElementById('oi-simple-'+id).value)||0;
-    if(qty<1){alert('1以上入力してください');return;}
+    const newTotal=newLocs.reduce((a,e)=>a+(e.qty||0),0);
+    qty+=newTotal;
+    if(qty<(parseInt(document.getElementById('oi-simple-'+id).value)||0)+newTotal&&qty<1){alert('1以上入力してください');return;}
+    if(newLocs.length>0){
+      newLocStr=locsToString(newLocs.map(e=>({zone:e.zone,qty:e.qty,unit:''})));
+    }
   }
   const clearOrder=document.getElementById('oi-clear-'+id).checked;
   const payload={id:it.id,stock:Number(it.stock)+qty};
   if(clearOrder)payload.ordered=false;
-  if(newLoc)payload.loc=newLoc;
+  if(newLocStr)payload.loc=newLocStr;
   try{
     const res=await gasCall({action:'update',data:payload});
     if(res.ok){
       localStorage.removeItem(CACHE_KEY);
+      delete orderNewLocMap[id];
       await loadData(false);
       toast('✓ 入庫：'+it.code+' +'+qty+unit);
       renderOrderList();
