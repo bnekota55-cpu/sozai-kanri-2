@@ -357,6 +357,7 @@ header h1{font-size:15px;font-weight:700;flex:1}
   <div id="home-alerts"><div class="loading"><div class="spin"></div>読込中...</div></div>
   <button class="full-btn" onclick="showScreen('sc-list')">📋 在庫一覧を見る</button>
   <button class="full-btn" style="background:var(--purple-bg);border-color:var(--purple-border);color:var(--purple);margin-top:6px" onclick="showOrderList()">📋 発注情報一覧を見る</button>
+  <button class="full-btn" style="background:var(--teal-bg);border-color:var(--teal-border);color:var(--teal);margin-top:6px" onclick="showHistory()">🕐 操作履歴を見る</button>
   <div style="margin-top:16px;padding:12px 14px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);display:flex;justify-content:space-between;align-items:center">
     <div>
       <div style="font-size:11px;font-weight:700;color:var(--text-3);letter-spacing:.06em;text-transform:uppercase;margin-bottom:3px">システム情報</div>
@@ -666,6 +667,19 @@ header h1{font-size:15px;font-weight:700;flex:1}
     </table>
   </div>
   <div id="list-pagination" style="margin-top:10px;display:flex;gap:6px;justify-content:center;flex-wrap:wrap"></div>
+</div>
+</div>
+
+<!-- ===== 履歴 ===== -->
+<div class="screen" id="sc-history">
+<button class="back-btn" onclick="goHome()">← 戻る</button>
+<div class="card">
+  <div class="top-bar">
+    <h2>📋 操作履歴</h2>
+    <button class="secondary" style="padding:6px 12px;font-size:12px" onclick="loadHistory()">↺ 更新</button>
+  </div>
+  <p style="font-size:12px;color:var(--text-2);margin-bottom:14px">直近1週間の入庫・出庫・編集の履歴です。</p>
+  <div id="history-body"><div class="loading"><div class="spin"></div>読込中...</div></div>
 </div>
 </div>
 
@@ -1278,13 +1292,16 @@ async function submitOrderIn(id){
     newLocs.forEach(e=>updated.push({zone:e.zone,qty:e.qty,unit:''}));
     newLocStr=locsToString(updated);
   } else {
-    qty=parseInt(document.getElementById('oi-simple-'+id).value)||0;
+    const simpleQty=parseInt(document.getElementById('oi-simple-'+id).value)||0;
     const newTotal=newLocs.reduce((a,e)=>a+(e.qty||0),0);
-    qty+=newTotal;
-    if(qty<(parseInt(document.getElementById('oi-simple-'+id).value)||0)+newTotal&&qty<1){alert('1以上入力してください');return;}
     if(newLocs.length>0){
+      // 保管場所を追加した場合：在庫数＝保管場所合計（足し算しない）
+      qty=newTotal;
       newLocStr=locsToString(newLocs.map(e=>({zone:e.zone,qty:e.qty,unit:''})));
+    } else {
+      qty=simpleQty;
     }
+    if(qty<1){alert('1以上入力してください');return;}
   }
   const clearOrder=document.getElementById('oi-clear-'+id).checked;
   const payload={id:it.id,stock:Number(it.stock)+qty};
@@ -1293,6 +1310,7 @@ async function submitOrderIn(id){
   try{
     const res=await gasCall({action:'update',data:payload});
     if(res.ok){
+      writeLog('in',it,'+'+qty+unit+(newLocStr?' → '+newLocStr:''));
       localStorage.removeItem(CACHE_KEY);
       delete orderNewLocMap[id];
       await loadData(false);
@@ -1394,6 +1412,7 @@ async function doRegisterNew(d){
   try{
     const res=await gasCall({action:'add',data:d});
     if(res.ok){
+      writeLog('add',d,'新規登録 在庫:'+d.stock);
       localStorage.removeItem(CACHE_KEY);
       newLocEntries=[];supplyLocEntries=[];pendingNewData=null;
       await loadData(false);toast('✓ 登録しました：'+d.code+' '+(d.supply_name||d.name));goHome();
@@ -1493,8 +1512,11 @@ async function submitEdit(){
   }
   try{
     const res=await gasCall({action:'update',data:payload});
-    if(res.ok){localStorage.removeItem(CACHE_KEY);await loadData(false);closeModal('edit-modal');toast('✓ 保存しました');}
-    else{errEl.textContent='失敗: '+(res.error||'不明');errEl.style.display='';}
+    if(res.ok){
+      const editedIt=items.find(x=>String(x.id)===String(id));
+      if(editedIt) writeLog('edit',{...editedIt,...payload},'在庫:'+payload.stock+' 適正:'+payload.min_stock);
+      localStorage.removeItem(CACHE_KEY);await loadData(false);closeModal('edit-modal');toast('✓ 保存しました');
+    }else{errEl.textContent='失敗: '+(res.error||'不明');errEl.style.display='';}
   }catch(e){errEl.textContent='通信エラー: '+e.message;errEl.style.display='';}
   btn.disabled=false;btn.textContent='✓ 保存する';
 }
@@ -1512,6 +1534,7 @@ async function deleteItem(idArg){
   try{
     const res=await gasCall({action:'delete',data:{id}});
     if(res.ok){
+      writeLog('del',it,'削除');
       localStorage.removeItem(CACHE_KEY);
       await loadData(false);
       toast('🗑 削除しました：'+it.code);
@@ -1796,12 +1819,15 @@ async function submitInExist(){
     eiNewLocEntries.forEach(e=>updated.push({zone:e.zone,qty:e.qty,unit:''}));
     newLocStr=locsToString(updated);
   } else {
-    qty=parseInt(document.getElementById('ei-qty').value)||0;
-    if(qty<1){errEl.textContent='1以上入力してください';errEl.style.display='';return;}
-    // 保管場所未登録品に新規場所が追加されていれば保存
+    const simpleQty=parseInt(document.getElementById('ei-qty').value)||0;
     if(eiNoLocEntries.length>0){
+      // 保管場所を追加した場合：在庫数＝保管場所合計（足し算しない）
+      qty=eiNoLocEntries.reduce((a,e)=>a+(e.qty||0),0);
       newLocStr=locsToString(eiNoLocEntries.map(e=>({zone:e.zone,qty:e.qty,unit:''})));
+    } else {
+      qty=simpleQty;
     }
+    if(qty<1){errEl.textContent='1以上入力してください';errEl.style.display='';return;}
   }
 
   const btn=document.getElementById('ei-submit-btn');btn.disabled=true;btn.textContent='処理中...';
@@ -1811,7 +1837,7 @@ async function submitInExist(){
   if(newLocStr!==null)payload.loc=newLocStr;
   try{
     const res=await gasCall({action:'update',data:payload});
-    if(res.ok){localStorage.removeItem(CACHE_KEY);await loadData(false);toast('✓ 入庫：'+it.code+' +'+qty+getUnit(it));goHome();}
+    if(res.ok){localStorage.removeItem(CACHE_KEY);await loadData(false);writeLog('in',it,'+'+qty+getUnit(it)+(payload.loc?' → '+payload.loc:''));toast('✓ 入庫：'+it.code+' +'+qty+getUnit(it));goHome();}
     else{errEl.textContent='失敗: '+(res.error||'不明');errEl.style.display='';}
   }catch(e){errEl.textContent='通信エラー: '+e.message;errEl.style.display='';}
   btn.disabled=false;btn.textContent='✓ 入庫する';
@@ -1855,7 +1881,7 @@ async function submitOut(){
 
   try{
     const res=await gasCall({action:'update',data:payload});
-    if(res.ok){localStorage.removeItem(CACHE_KEY);await loadData(false);toast('✓ 出庫：'+it.code+' −'+qty+getUnit(it));goHome();}
+    if(res.ok){localStorage.removeItem(CACHE_KEY);await loadData(false);writeLog('out',it,'−'+qty+getUnit(it));toast('✓ 出庫：'+it.code+' −'+qty+getUnit(it));goHome();}
     else{errEl.textContent='失敗: '+(res.error||'不明');errEl.style.display='';}
   }catch(e){errEl.textContent='通信エラー: '+e.message;errEl.style.display='';}
   btn.disabled=false;btn.textContent='✓ 出庫する';
@@ -1948,6 +1974,65 @@ function renderList(){
 }
 function goPage(p){listPage=p;renderList();}
 function setFilter(f){listFilter=f;listPage=0;renderList();}
+
+/* ====== 履歴機能 ====== */
+function showHistory(){
+  showScreen('sc-history');
+  loadHistory();
+}
+
+async function loadHistory(){
+  const el=document.getElementById('history-body');
+  el.innerHTML='<div class="loading"><div class="spin"></div>読込中...</div>';
+  try{
+    const data=await gasCall({action:'getLog'});
+    if(!Array.isArray(data)||data.length===0){
+      el.innerHTML='<div style="font-size:12px;color:var(--text-2);padding:16px;text-align:center">履歴がありません</div>';
+      return;
+    }
+    // 日付の新しい順に表示
+    const logs=[...data].reverse();
+    el.innerHTML=logs.map(log=>{
+      const typeMap={in:'↓ 入庫',out:'↑ 出庫',edit:'✏️ 編集',add:'＋ 新規登録',del:'🗑 削除'};
+      const colorMap={in:'var(--green)',out:'var(--red)',edit:'var(--blue)',add:'var(--purple)',del:'var(--red)'};
+      const bgMap={in:'var(--green-bg)',out:'var(--red-bg)',edit:'var(--blue-bg)',add:'var(--purple-bg)',del:'var(--red-bg)'};
+      const borderMap={in:'var(--green-border)',out:'var(--red-border)',edit:'var(--blue-border)',add:'var(--purple-border)',del:'var(--red-border)'};
+      const type=log.type||'edit';
+      const label=typeMap[type]||type;
+      const color=colorMap[type]||'var(--text)';
+      const bg=bgMap[type]||'var(--bg)';
+      const border=borderMap[type]||'var(--border)';
+      return`<div style="background:${bg};border:1px solid ${border};border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <span style="font-size:12px;font-weight:700;color:${color}">${label}</span>
+          <span style="font-size:11px;color:var(--text-3)">${log.datetime||''}</span>
+        </div>
+        <div style="font-size:12px;font-weight:700;color:var(--text)">${log.code||''} ${log.name||''}</div>
+        <div style="font-size:11px;color:var(--text-2);margin-top:2px">${log.detail||''}</div>
+      </div>`;
+    }).join('');
+  }catch(e){
+    el.innerHTML=`<div class="err-box">読込エラー: ${e.message}</div>`;
+  }
+}
+
+// 操作ログを記録する関数
+async function writeLog(type, it, detail){
+  const now=new Date();
+  const datetime=now.getFullYear()+'/'+(now.getMonth()+1).toString().padStart(2,'0')+'/'+now.getDate().toString().padStart(2,'0')+' '+now.getHours().toString().padStart(2,'0')+':'+now.getMinutes().toString().padStart(2,'0');
+  const log={
+    type,
+    datetime,
+    code:it.code||'',
+    name:(it.supply_name||it.name||''),
+    detail
+  };
+  try{
+    await gasCall({action:'addLog',data:log});
+  }catch(e){
+    console.warn('ログ記録失敗:', e.message);
+  }
+}
 
 loadData(false);
 </script>
